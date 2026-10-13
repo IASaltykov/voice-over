@@ -1,0 +1,69 @@
+# Python bytecode and tooling
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+.venv/
+venv/
+env/
+ENV/
+
+# Local configuration and secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.pfx
+*.p12
+secrets.*
+credentials.*
+
+# User content and generated audio
+input/
+output/
+audio_slides/
+cache/
+logs/
+models/
+*.mp3
+*.wav
+*.ogg
+*.flac
+*.m4a
+*.manifest.json
+*.chapters.json
+chapters_review.json
+
+# User documents and scripts. Safe repository examples are explicitly re-included.
+*.txt
+*.md
+*.markdown
+*.fb2
+*.fb2.zip
+*.zip
+!README.md
+!requirements.txt
+!requirements-dev.txt
+!examples/
+!examples/**
+
+# Backups and local exports
+backup*/
+*.backup*
+*.bak
+*.old
+generation.log
+
+# OS/editor files
+.DS_Store
+Thumbs.db
+Desktop.ini
+.idea/
+.vscode/
+*.swp
+*.swo

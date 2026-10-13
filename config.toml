@@ -1,0 +1,41 @@
+[paths]
+input = "input"
+output = "output"
+cache = "cache"
+logs = "logs"
+models = "models"
+
+[tts]
+engine = "edge"
+voice = "ru-RU-DmitryNeural"
+rate = "-5%"
+retries = 4
+timeout_seconds = 90
+
+[segmentation]
+max_chars = 700
+min_chars = 150
+prefer_paragraphs = true
+prefer_sentences = true
+
+[audio]
+sentence_pause_ms = 0
+paragraph_pause_ms = 120
+mp3_quality = "2"
+
+[fb2]
+enabled = true
+split_by = "chapter"
+max_section_depth = 1
+include_epigraphs = true
+include_poems = true
+include_notes = false
+speak_chapter_titles = false
+
+[chapter_detection]
+mode = "auto"
+min_words = 1500
+target_max_words = 5000
+preserve_existing_chapters = true
+preserve_original_text = true
+review_uncertain_boundaries = true
