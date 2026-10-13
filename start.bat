@@ -1,16 +1,28 @@
 @echo off
-setlocal
+setlocal EnableExtensions
+chcp 65001 >nul
 cd /d "%~dp0"
-set "PYTHON_CMD=python"
-where %PYTHON_CMD% >nul 2>nul
+
+where node >nul 2>nul
 if errorlevel 1 (
-    echo Python не найден в PATH.
-    pause
-    exit /b 3
+  echo Node.js 22.13 or newer was not found in PATH.
+  pause
+  exit /b 3
 )
-%PYTHON_CMD% main.py %*
-set "EXIT_CODE=%ERRORLEVEL%"
+if not exist "node_modules" (
+  echo Installing Node.js dependencies...
+  call npm ci
+  if errorlevel 1 goto :error
+)
+call npx tsx src\main.mjs %*
+if errorlevel 1 goto :error
 echo.
-if not "%EXIT_CODE%"=="0" echo Генерация завершилась с ошибкой. Код: %EXIT_CODE%
+echo Completed.
 pause
-exit /b %EXIT_CODE%
+exit /b 0
+
+:error
+echo.
+echo Processing failed. Exit code: %ERRORLEVEL%
+pause
+exit /b %ERRORLEVEL%

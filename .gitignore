@@ -1,16 +1,21 @@
-# Python bytecode and tooling
+# Node.js dependencies and tooling
+node_modules/
+npm-debug.log*
+*.log
+*.tmp
+*.temp
+tmp/
+temp/
+
+# Legacy generated artifacts; no Python runtime is part of this project.
 __pycache__/
-*.py[cod]
-*$py.class
 .pytest_cache/
-.mypy_cache/
-.ruff_cache/
-.coverage
-htmlcov/
-.venv/
-venv/
-env/
-ENV/
+*.py[cod]
+
+# Local Node/Docker outputs
+output-node-*/
+output-e2e-*/
+*.building.mp3
 
 # Local configuration and secrets
 .env
@@ -45,10 +50,10 @@ chapters_review.json
 *.markdown
 *.fb2
 *.fb2.zip
+*.pdf
 *.zip
 !README.md
-!requirements.txt
-!requirements-dev.txt
+!TEST_REPORT.md
 !examples/
 !examples/**
 
@@ -58,6 +63,7 @@ backup*/
 *.bak
 *.old
 generation.log
+logs/docker-*.log
 
 # OS/editor files
 .DS_Store

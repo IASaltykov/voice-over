@@ -1,0 +1,24 @@
+{
+  "name": "edge-tts-audio-generator",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Edge TTS generator for TXT, Markdown, FB2, FB2.ZIP and PDF",
+  "engines": {
+    "node": ">=22.13"
+  },
+  "scripts": {
+    "start": "tsx src/main.mjs",
+    "test": "node --test",
+    "analyze": "tsx src/main.mjs --analyze-only",
+    "edge:check": "node tests/edge-connection.mjs"
+  },
+  "dependencies": {
+    "adm-zip": "^0.6.1",
+    "fast-xml-parser": "^5.11.2",
+    "node-edge-tts": "1.2.11",
+    "pdfjs-dist": "6.4.299",
+    "smol-toml": "^1.9.1",
+    "tsx": "^4.19.3"
+  }
+}

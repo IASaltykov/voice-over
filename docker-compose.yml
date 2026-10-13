@@ -1,0 +1,12 @@
+name: voice-over
+
+services:
+  voice-over:
+    build: .
+    image: voice-over:local
+    volumes:
+      - ./input:/app/input
+      - ./output:/app/output
+      - ./logs:/app/logs
+      - ./cache:/app/cache
+    command: ["--input", "/app/input", "--output", "/app/output"]

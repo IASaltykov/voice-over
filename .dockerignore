@@ -1,0 +1,16 @@
+.git
+.gitignore
+node_modules
+__pycache__/
+.pytest_cache/
+input
+output
+audio_slides
+models
+cache
+logs
+examples
+*.mp3
+*.wav
+*.zip
+*.log

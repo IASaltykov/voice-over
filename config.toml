@@ -11,6 +11,7 @@ voice = "ru-RU-DmitryNeural"
 rate = "-5%"
 retries = 4
 timeout_seconds = 90
+socket_timeout_seconds = 30
 
 [segmentation]
 max_chars = 700
@@ -39,3 +40,7 @@ target_max_words = 5000
 preserve_existing_chapters = true
 preserve_original_text = true
 review_uncertain_boundaries = true
+
+[pdf]
+# PDF.js extracts a text layer. Scanned PDFs require an external OCR workflow.
+max_bytes = 262144000
