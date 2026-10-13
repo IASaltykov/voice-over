@@ -1,5 +1,21 @@
 # E2E audit report — 2026-10-13
 
+## Smart Queue / Resume addendum — 2026-10-13
+
+The Edge TTS flow now has a single local queue (`concurrency=1`, 5,000 ms
+minimum interval, 8 requests/minute by default), durable per-fragment cache,
+and atomic manifest progress. A real Docker smoke run synthesized one safe
+example fragment, stored it under `cache/tts/<sha256>/`, and produced a valid
+MP3: FFprobe reported MP3 / 5.160 seconds and FFmpeg decoded it without error.
+Its immediate repeat used the final cache (`created: 0`, `skipped: 1`).
+
+The current regression suite has 25 passing tests locally and in Docker. Mock
+tests cover: HTTP 429 on fragment 6 after five saved fragments, no later
+requests after pause, automatic resume using those five cached fragments,
+corrupt-cache rejection, changed voice/rate rejection, queue pacing and local
+rate limit, and atomic paused manifest state. No large user book was
+synthesized for this addendum.
+
 ## Scope and safety
 
 The audit was run without deleting or overwriting user source documents, existing audio files, models, or backups.  The full FB2 book was analysed only; it was **not** synthesized, because a full-book synthesis is an external-service load and requires explicit confirmation.

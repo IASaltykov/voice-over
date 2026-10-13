@@ -51,13 +51,11 @@ if not defined FOUND_INPUT (
 
 set "IMAGE_NAME="
 for /f "usebackq delims=" %%I in (`docker compose config --images 2^>nul`) do if not defined IMAGE_NAME set "IMAGE_NAME=%%I"
-if defined IMAGE_NAME docker image inspect "%IMAGE_NAME%" >nul 2>nul
-if not defined IMAGE_NAME goto :build
-if errorlevel 1 goto :build
-goto :run
+goto :build
 
 :build
-echo Docker image is missing. Building it now...
+echo Checking Docker image and source changes...
+echo Docker will reuse cached layers when the image is current.
 docker compose build "%SERVICE%" >> "%RUN_LOG%" 2>&1
 if errorlevel 1 (
   type "%RUN_LOG%"

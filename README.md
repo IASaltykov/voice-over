@@ -105,3 +105,28 @@ docker compose run --rm --entrypoint node voice-over tests/edge-connection.mjs
 Тест проверяет DNS, HTTPS/TLS, WebSocket handshake, создание MP3, FFprobe и FFmpeg. Его временный результат хранится отдельно от пользовательских аудиокниг в `cache/diagnostics/edge-connection.mp3`, а последнее диагностическое резюме — в `logs/edge-connection-latest.json`.
 
 Для HTTP 403 приложение выводит этап ошибки, HTTP-статус, среду, голос и номер попытки. HTTP 403 и HTTP 429 на WebSocket handshake открывают защитный circuit breaker: дальнейшие главы продолжают анализироваться, но не отправляются повторно сотнями одинаковых запросов.
+## Smart Queue, fragment cache, and resume
+
+Every Edge TTS request goes through one sequential queue. The conservative
+defaults in `config.toml` are one active request, a 5,000 ms minimum interval,
+and no more than 8 requests per minute. These are local safety controls, not a
+claim about a Microsoft limit. Change `[edge_queue]` only if you understand
+that a lower delay can make `HTTP 429` more likely.
+
+Each completed fragment is immediately validated by FFprobe and FFmpeg, then
+stored atomically in `cache/tts/<sha256>/fragment.mp3` with `metadata.json`.
+The key includes the fragment text, Edge engine, voice, rate, and client. On
+restart, valid matching fragments are reused; a damaged file or changed voice
+or rate is never reused. A final chapter MP3 is produced only after all of its
+fragments are available.
+
+If Edge returns HTTP 429, the queue stops accepting new requests, the current
+manifest is written atomically, and the program exits non-zero with an `EDGE
+TTS PAUSED` summary. It does not retry indefinitely or attempt to bypass the
+service restriction. Restart `start-docker.bat` later: it resumes from the
+first incomplete fragment automatically. If an explicit `Retry-After` value
+was received and has not expired, the next run reports that fact without
+sending a request early. HTTP 403 is handled in the same protective way.
+
+The Docker Compose bind mounts keep `output/`, `cache/`, and `logs/` on the
+host, so progress survives a container, Docker Desktop, or Windows restart.

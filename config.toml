@@ -9,9 +9,35 @@ models = "models"
 engine = "edge"
 voice = "ru-RU-DmitryNeural"
 rate = "-5%"
+pitch = "+0Hz"
+volume = "+0%"
+audio_format = "audio-24khz-48kbitrate-mono-mp3"
 retries = 4
 timeout_seconds = 90
 socket_timeout_seconds = 30
+
+[edge_queue]
+# Conservative local pacing; this is not a statement of any Microsoft limit.
+enabled = true
+concurrency = 1
+min_interval_ms = 7000
+normal_jitter_min_ms = 0
+normal_jitter_max_ms = 3000
+max_requests_per_minute = 7
+bucket_capacity = 1
+transient_max_attempts = 3
+transient_base_backoff_ms = 2000
+transient_max_backoff_ms = 30000
+retry_jitter = "equal"
+http_429_initial_cooldown_ms = 60000
+http_429_max_cooldown_ms = 600000
+http_429_jitter_ratio = 0.15
+max_429_events_per_run = 3
+http_403_max_retries = 1
+circuit_half_open_requests = 1
+resume_mode = "persist_and_exit"
+stop_on_http_429 = true
+stop_on_http_403 = true
 
 [segmentation]
 max_chars = 700
