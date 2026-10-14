@@ -14,7 +14,8 @@ export function fragmentDescriptor(text, settings) {
 export async function writeJsonAtomic(file, value) {
   await fs.mkdir(path.dirname(file), { recursive: true });
   const temporary = uniqueTemp(file);
-  await fs.writeFile(temporary, JSON.stringify(value, null, 2), 'utf8');
+  const handle = await fs.open(temporary, 'w');
+  try { await handle.writeFile(JSON.stringify(value, null, 2), 'utf8'); await handle.sync(); } finally { await handle.close(); }
   await fs.rename(temporary, file);
 }
 
@@ -50,7 +51,8 @@ export class FragmentCache {
     await fs.mkdir(files.directory, { recursive: true });
     const content = await fs.readFile(sourceFile);
     const temporary = uniqueTemp(files.audio);
-    await fs.writeFile(temporary, content);
+    const handle = await fs.open(temporary, 'w');
+    try { await handle.writeFile(content); await handle.sync(); } finally { await handle.close(); }
     const checked = await this.validateAudio(temporary);
     if (!checked.valid) { await fs.rm(temporary, { force: true }); throw new Error(`Refusing to cache invalid MP3: ${checked.detail || 'validation failed'}`); }
     // Preserve evidence of a broken cache entry instead of deleting it.  A

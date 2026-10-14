@@ -102,7 +102,7 @@ test('corrupt cache and changed voice or rate are not reused', async (t) => {
   assert.equal(await cache.get(fragmentDescriptor('same text', { ...settings, rate: '+5%' })), null);
 });
 
-test('block progress is atomically paused at mocked HTTP 429 without later requests', async (t) => {
+test('mocked HTTP 429 persists cooldown then automatically retries only the unfinished fragment', async (t) => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'voice-over-main-pause-'));
   t.after(() => fs.rm(root, { recursive: true, force: true }));
   const destination = path.join(root, 'output');
@@ -112,9 +112,12 @@ test('block progress is atomically paused at mocked HTTP 429 without later reque
   const queue = new TtsQueue({ min_interval_ms: 1, normal_jitter_max_ms: 0, max_requests_per_minute: 60 });
   const manifest = { source: 'mock.txt', totalBlocks: 1, blocks: {} };
   let requests = 0;
+  const cooldownWaits = [];
   const settingsForBlock = {
     ...settings, cache: root, maxChars: 20, minChars: 1, retries: 1, timeout: 5, quality: '2', force: false,
-    edgeQueue: { stopOnHttp429: true, stopOnHttp403: true }, edgeCircuit: { open: false, reason: '' }, environment: 'test',
+    edgeQueue: validateQueueConfig({ min_interval_ms: 1, normal_jitter_max_ms: 0, max_requests_per_minute: 60, http_429_cooldown_seconds: [1], http_429_jitter_ratio: 0 }), edgeCircuit: { open: false, reason: '' }, environment: 'test',
+    sleep: async (ms) => { cooldownWaits.push(ms); },
+    mergeMp3: async () => ({ ok: true, duration: 6 }),
     validatePart: validateAudio,
     synthesize: async (_text, file) => {
       requests++;
@@ -124,13 +127,25 @@ test('block progress is atomically paused at mocked HTTP 429 without later reque
   };
   const text = Array.from({ length: 6 }, (_, index) => `Sentence ${index + 1} abc.`).join(' ');
   const result = await mainInternals.speakBlock({ index: 1, title: '', text }, destination, settingsForBlock, manifest, manifestFile, log, queue, fragmentCache);
-  assert.equal(result.status, 'paused');
-  assert.equal(result.completed, 5);
-  assert.equal(requests, 6);
-  assert.equal(queue.paused, true);
+  assert.equal(result.status, 'created');
+  assert.equal(requests, 7);
+  assert.equal(cooldownWaits.length, 1);
+  assert.ok(cooldownWaits[0] >= 1_000);
+  assert.equal(queue.paused, false);
   const savedManifest = JSON.parse(await fs.readFile(manifestFile, 'utf8'));
-  assert.equal(savedManifest.progress['1'].status, 'paused');
-  assert.equal(savedManifest.progress['1'].completed_fragments, 5);
+  assert.equal(savedManifest.progress['1'].status, 'completed');
+  assert.equal(savedManifest.progress['1'].completed_fragments, 6);
   const chunks = text.match(/[^.]+\./g).map((value) => value.trim());
-  assert.equal((await Promise.all(chunks.slice(0, 5).map((value) => fragmentCache.get(fragmentDescriptor(value, settings))))).filter(Boolean).length, 5);
+  assert.equal((await Promise.all(chunks.map((value) => fragmentCache.get(fragmentDescriptor(value, settings))))).filter(Boolean).length, 6);
+});
+
+test('429 cooldown progression uses 15, 30, 60, then 120 minutes and honors Retry-After', () => {
+  const config = validateQueueConfig({ http_429_jitter_ratio: 0, http_429_cooldown_seconds: [900, 1800, 3600, 7200] });
+  const now = Date.UTC(2026, 0, 1);
+  assert.equal(next429RetryAt({ event: 1, config, now, random: () => 0 }), now + 900_000);
+  assert.equal(next429RetryAt({ event: 2, config, now, random: () => 0 }), now + 1_800_000);
+  assert.equal(next429RetryAt({ event: 3, config, now, random: () => 0 }), now + 3_600_000);
+  assert.equal(next429RetryAt({ event: 4, config, now, random: () => 0 }), now + 7_200_000);
+  assert.equal(next429RetryAt({ event: 5, config, now, random: () => 0 }), now + 7_200_000);
+  assert.equal(next429RetryAt({ retryAfter: '120', event: 1, config, now, random: () => 0 }), now + 120_000);
 });

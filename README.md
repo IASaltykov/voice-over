@@ -120,13 +120,20 @@ restart, valid matching fragments are reused; a damaged file or changed voice
 or rate is never reused. A final chapter MP3 is produced only after all of its
 fragments are available.
 
-If Edge returns HTTP 429, the queue stops accepting new requests, the current
-manifest is written atomically, and the program exits non-zero with an `EDGE
-TTS PAUSED` summary. It does not retry indefinitely or attempt to bypass the
-service restriction. Restart `start-docker.bat` later: it resumes from the
-first incomplete fragment automatically. If an explicit `Retry-After` value
-was received and has not expired, the next run reports that fact without
-sending a request early. HTTP 403 is handled in the same protective way.
+If Edge returns HTTP 429, the queue stops accepting new requests, atomically
+saves fragment progress and enters `COOLDOWN` without ending the Node.js
+process or Docker container. It waits asynchronously, then retries only the
+unfinished fragment. With no `Retry-After` header the conservative defaults
+are 15, 30, 60 and then 120 minutes, plus a positive 0–10% jitter. A supplied
+`Retry-After` is always treated as a minimum. These are application safety
+settings, not claimed Microsoft limits, and can be changed in `[edge_queue]`
+in `config.toml`. If Docker or Windows is stopped while waiting, the saved
+`next_retry_at` is honored at the next run before a request is sent.
+
+HTTP 403 is deliberately different: the program makes at most one diagnostic
+retry, persists `PAUSED_REQUIRES_ATTENTION`, and does not treat it as a rate
+limit or try to bypass the service restriction. `logs/events.jsonl` records
+cooldown and recovery events without secrets, request URLs or credentials.
 
 The Docker Compose bind mounts keep `output/`, `cache/`, and `logs/` on the
 host, so progress survives a container, Docker Desktop, or Windows restart.

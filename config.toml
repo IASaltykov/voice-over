@@ -29,13 +29,16 @@ transient_max_attempts = 3
 transient_base_backoff_ms = 2000
 transient_max_backoff_ms = 30000
 retry_jitter = "equal"
-http_429_initial_cooldown_ms = 60000
-http_429_max_cooldown_ms = 600000
-http_429_jitter_ratio = 0.15
+# Local conservative recovery policy, not an official Microsoft limit.
+# A 429 keeps the process/container alive, persists progress, then retries only
+# the unfinished fragment after 15m, 30m, 60m, then 120m (+0..10% jitter).
+http_429_cooldown_seconds = [900, 1800, 3600, 7200]
+http_429_jitter_ratio = 0.10
+auto_resume_429 = true
+persist_cooldown = true
 max_429_events_per_run = 3
 http_403_max_retries = 1
 circuit_half_open_requests = 1
-resume_mode = "persist_and_exit"
 stop_on_http_429 = true
 stop_on_http_403 = true
 
