@@ -3,8 +3,10 @@ import path from 'node:path';
 import AdmZip from 'adm-zip';
 import { XMLParser } from 'fast-xml-parser';
 import { extractPdf } from './pdf.mjs';
+import { extractArticle } from './web.mjs';
+import { parseEpubBuffer } from './epub.mjs';
 
-const SUPPORTED = new Set(['.txt', '.md', '.markdown', '.fb2', '.pdf']);
+const SUPPORTED = new Set(['.txt', '.md', '.markdown', '.fb2', '.pdf', '.html', '.htm', '.xhtml', '.epub']);
 const DIVIDER = /^\s*#(?:\s+(.*?))?\s*$/;
 const MAX_ZIP_ENTRIES = 100;
 const MAX_ZIP_UNCOMPRESSED_BYTES = 50 * 1024 * 1024;
@@ -80,6 +82,8 @@ function fb2Blocks(data) {
 export function parseBuffer(buffer, extension, sourceName = '') {
   const ext = extension.toLowerCase();
   if (ext === '.fb2') return fb2Blocks(buffer.toString('utf8'));
+  if (ext === '.epub') return parseEpubBuffer(buffer).blocks;
+  if (['.html', '.htm', '.xhtml'].includes(ext)) return [{ index: 1, ...extractArticle(buffer, { sourceUrl: sourceName }) }];
   const text = buffer.toString('utf8').replace(/^\uFEFF/, '');
   return parseDelimited(text, ['.md', '.markdown'].includes(ext));
 }
@@ -104,6 +108,10 @@ export async function parseFileDetails(file, options = {}) {
     const pdf = await extractPdf(file, options.pdf || {});
     const hasHeadings = /^#\s+/m.test(pdf.markdown);
     return { blocks: hasHeadings ? pdf.blocks : [], normalizedText: pdf.markdown, pdf: pdf.metadata };
+  }
+  if (path.extname(file).toLowerCase() === '.epub') {
+    const epub = parseEpubBuffer(await fs.readFile(file));
+    return { blocks: epub.blocks, metadata: epub.metadata };
   }
   return { blocks: parseBuffer(await fs.readFile(file), path.extname(file), file) };
 }

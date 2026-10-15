@@ -11,6 +11,7 @@ import { isCurrentOutput } from './cache.mjs';
 import { FragmentCache, fragmentDescriptor, writeJsonAtomic } from './fragment-cache.mjs';
 import { QueuePausedError, TtsQueue, jitterDelay, next429RetryAt, validateQueueConfig } from './tts-queue.mjs';
 import { detectPlain, cacheKey } from './chapters.mjs';
+import { materializeUrls } from './sources.mjs';
 import * as audio from './audio.mjs';
 import { classifyEdgeError, edgeClientInfo, formatEdgeDiagnostic, runtimeEnvironment, synthesizeEdge } from './edge.mjs';
 
@@ -273,13 +274,17 @@ async function main() {
   if (cli.check || !inspectionOnly) await audio.requireTools();
   if (cli.check) { await logLine(log, 'Dependency check passed'); return 0; }
   if (!(await fs.stat(settings.input).catch(() => null))) throw new Error(`Input not found: ${settings.input}`);
-  const files = cli.only ? [path.resolve(settings.input, cli.only)] : await discover(settings.input);
+  const localFiles = cli.only ? [path.resolve(settings.input, cli.only)] : await discover(settings.input);
+  const directUrls = cli.url ? (Array.isArray(cli.url) ? cli.url : [cli.url]) : [];
+  const urlSources = await materializeUrls(settings.input, settings.cache, directUrls);
+  const files = [...localFiles.map((file) => ({ file, relative: path.relative(settings.input, file) })), ...urlSources];
   if (!files.length) throw new Error('No supported input documents found');
   const totals = { documents: 0, blocks: 0, created: 0, skipped: 0, errors: 0 };
   let pause = null;
-  for (const file of files) {
+  for (const source of files) {
+    const file = source.file;
     if (!(await fs.stat(file).catch(() => null))) throw new Error(`Document not found: ${file}`);
-    const relative = path.relative(settings.input, file);
+    const relative = source.relative;
     const destination = documentDestination(settings.output, relative);
     await fs.mkdir(destination, { recursive: true });
     try {
