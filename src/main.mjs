@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { parse as parseToml } from 'smol-toml';
 import { discover, parseFileDetails } from './parser.mjs';
 import { splitText } from './segmenter.mjs';
+import { normalizeForSpeech } from './speech-normalizer.mjs';
 import { verifyBlockSegmentation, verifyDocumentBlocks } from './integrity.mjs';
 import { isCurrentOutput } from './cache.mjs';
 import { FragmentCache, fragmentDescriptor, writeJsonAtomic } from './fragment-cache.mjs';
@@ -130,14 +131,15 @@ async function speakBlock(block, destination, settings, manifest, manifestFile, 
   const title = block.title.replace(/[<>:"/\\|?*]/g, '_').trim();
   const filename = `${String(block.index).padStart(width, '0')}${title ? ` ${title}` : ''}.mp3`;
   const target = path.join(destination, filename);
-  const textHash = digest(block.text);
-  const configHash = digest({ voice: settings.voice, rate: settings.rate, maxChars: settings.maxChars, engine: 'edge', client: 'node-edge-tts', version: 3 });
+  const spokenText = normalizeForSpeech(block.text);
+  const textHash = digest({ original: block.text, spoken: spokenText });
+  const configHash = digest({ voice: settings.voice, rate: settings.rate, maxChars: settings.maxChars, engine: 'edge', client: 'node-edge-tts', normalizer: 1, version: 4 });
   const previous = manifest.blocks[String(block.index)];
   if (!settings.force && await isCurrentOutput({ target, previous, textHash, configHash, filename, probe: audio.probe })) return { status: 'skipped', filename };
   if (settings.edgeCircuit?.open) return { status: 'paused', filename, detail: settings.edgeCircuit.reason };
 
-  const chunks = splitText(block.text, settings.maxChars, settings.minChars);
-  const integrity = verifyBlockSegmentation(block.text, chunks);
+  const chunks = splitText(spokenText, settings.maxChars, settings.minChars);
+  const integrity = verifyBlockSegmentation(spokenText, chunks);
   if (!integrity.ok) throw new Error(`Text integrity check failed for block ${block.index}: ${integrity.detail}`);
   await logLine(log, `${manifest.source} block=${block.index}: chars=${block.text.length}, fragments=${chunks.length}, lengths=${JSON.stringify(chunks.map((part) => part.length))}`);
   manifest.progress ||= {};

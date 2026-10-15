@@ -42,7 +42,7 @@ test('configuration rejects an uncontrolled queue', () => {
   assert.throws(() => validateQueueConfig({ max_requests_per_minute: 0 }), /invalid/);
   assert.throws(() => validateQueueConfig({ min_interval_ms: '5000' }), /invalid/);
   assert.throws(() => validateQueueConfig({ stop_on_http_429: 'yes' }), /true or false/);
-  assert.equal(validateQueueConfig({}).immediateResumeWithoutRetryAfter, true);
+  assert.equal(validateQueueConfig({}).immediateResumeWithoutRetryAfter, false);
   assert.throws(() => validateQueueConfig({ immediate_resume_without_retry_after: 'yes' }), /true or false/);
 });
 

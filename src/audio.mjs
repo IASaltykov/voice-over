@@ -35,6 +35,14 @@ export async function mergeMp3(parts, destination, quality = '2') {
     const result = await run(tool('ffmpeg'), ['-hide_banner', '-loglevel', 'error', '-y', '-f', 'concat', '-safe', '0', '-i', list, '-vn', '-c:a', 'libmp3lame', '-q:a', quality, building]);
     if (result.code !== 0) return { ok: false, detail: result.stderr.trim() };
     const checked = await probe(building); if (!checked.valid) return { ok: false, detail: checked.detail };
-    await fs.mkdir(path.dirname(destination), { recursive: true }); await fs.rename(building, destination); return { ok: true, duration: checked.duration };
+    await fs.mkdir(path.dirname(destination), { recursive: true });
+    // Windows cannot atomically rename over an existing file. Keep the old
+    // verified chapter until the replacement is fully built and validated.
+    const previous = `${destination}.previous-${process.pid}`;
+    const hadPrevious = Boolean(await fs.stat(destination).catch(() => null));
+    if (hadPrevious) await fs.rename(destination, previous);
+    try { await fs.rename(building, destination); } catch (error) { if (hadPrevious) await fs.rename(previous, destination).catch(() => {}); throw error; }
+    await fs.rm(previous, { force: true });
+    return { ok: true, duration: checked.duration };
   } finally { await fs.rm(directory, { recursive: true, force: true }); await fs.rm(building, { force: true }); }
 }

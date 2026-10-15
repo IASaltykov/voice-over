@@ -1,8 +1,8 @@
 export function splitText(text, limit = 700, minChars = 150) {
   if (limit < 20) throw new Error('max-chars must be at least 20');
-  const normalized = text.replace(/\s+/g, ' ').trim();
+  const normalized = text.replace(/\r\n/g, '\n').replace(/[ \t]+/g, ' ').replace(/\n{3,}/g, '\n\n').trim();
   if (!normalized) return [];
-  const sentences = normalized.match(/.*?(?:[.!?…]+(?=\s|$)|$)/g)?.map((x) => x.trim()).filter(Boolean) || [normalized];
+  const sentences = normalized.split(/\n{2,}/).flatMap((paragraph) => paragraph.replace(/\n/g, ' ').match(/.*?(?:[.!?…]+(?=\s|$)|$)/g)?.map((value) => value.trim()).filter(Boolean) || [paragraph.trim()]);
   const chunks = [];
   let current = '';
   for (const sentence of sentences) {

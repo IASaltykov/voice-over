@@ -42,9 +42,9 @@ http_429_cooldown_seconds = [900, 1800, 3600, 7200]
 http_429_jitter_ratio = 0.10
 auto_resume_429 = true
 persist_cooldown = true
-# After a Docker/Node restart, resume immediately when the service supplied no
-# Retry-After value. An explicit server Retry-After is never bypassed.
-immediate_resume_without_retry_after = true
+# Preserve the locally scheduled cooldown across Docker/Node restarts. This
+# avoids using a restart as a way to reset server-side rate limiting.
+immediate_resume_without_retry_after = false
 max_429_events_per_run = 3
 http_403_max_retries = 1
 circuit_half_open_requests = 1
