@@ -189,12 +189,14 @@ async function speakBlock(block, destination, settings, manifest, manifestFile, 
             const events = (progress.consecutive_429 || 0) + 1;
             const next = next429RetryAt({ retryAfter: diagnosis.retryAfter, event: events, config: settings.edgeQueue });
             const waitMs = Math.max(0, next - Date.now());
+            const pacing = queue.recordRateLimit();
+            await writeJsonAtomic(path.join(settings.cache, 'edge-pacing.json'), pacing);
             queue.pause(`HTTP 429 until ${new Date(next).toISOString()}`);
             progress.status = 'COOLDOWN'; progress.reason = 'HTTP_429'; progress.retry_after = diagnosis.retryAfter;
             progress.next_retry_at = new Date(next).toISOString(); progress.consecutive_429 = events;
             progress.fragment = index + 1; progress.completed_fragments = index; progress.updated_at = new Date().toISOString();
             await saveManifest(manifestFile, manifest);
-            await eventLog(settings, { type: 'EDGE_TTS_COOLDOWN', document: manifest.source, block: block.index, fragment: index + 1, fragment_total: chunks.length, voice: settings.voice, rate: settings.rate, error_code: diagnosis.code, retry_after: diagnosis.retryAfter || null, consecutive_429: events, cooldown_ms: waitMs, next_retry_at: progress.next_retry_at, completed_fragments: index });
+            await eventLog(settings, { type: 'EDGE_TTS_COOLDOWN', document: manifest.source, block: block.index, fragment: index + 1, fragment_total: chunks.length, voice: settings.voice, rate: settings.rate, error_code: diagnosis.code, retry_after: diagnosis.retryAfter || null, consecutive_429: events, cooldown_ms: waitMs, next_retry_at: progress.next_retry_at, completed_fragments: index, recommended_interval_ms: pacing.intervalMs });
             console.log(['========================================', 'EDGE TTS COOLDOWN', '========================================', `Document: ${manifest.source}`, `Block: ${block.index}/${manifest.totalBlocks}`, `Next fragment: ${index + 1}/${chunks.length}`, 'Reason: HTTP 429', `Retry-After: ${diagnosis.retryAfter || 'not provided'}`, `Consecutive 429: ${events}`, `Waiting: ${humanDuration(waitMs)}`, `Next attempt: ${new Date(next).toLocaleTimeString()}`, 'Progress saved: YES', `Automatic resume: ${settings.edgeQueue.autoResume429 ? 'ENABLED' : 'DISABLED'}`, '========================================'].join('\n'));
             if (!settings.edgeQueue.autoResume429) return { status: 'paused', filename, detail: lastError, completed: index, total: chunks.length, diagnosis };
             await logLine(log, `Waiting before automatic retry: ${manifest.source} block=${block.index} fragment=${index + 1}/${chunks.length} wait=${humanDuration(waitMs)}`);
@@ -218,7 +220,7 @@ async function speakBlock(block, destination, settings, manifest, manifestFile, 
           continue;
         }
         const validation = await (settings.validatePart || validatePart)(part);
-        if (validation.valid) { success = true; progress.consecutive_429 = 0; break; }
+        if (validation.valid) { success = true; progress.consecutive_429 = 0; await writeJsonAtomic(path.join(settings.cache, 'edge-pacing.json'), queue.recordSuccess()); break; }
         lastError = validation.detail;
         await fs.rm(part, { force: true });
         await logLine(log, `MP3 validation failure (no TTS retry): classification=${validation.code || 'INVALID_AUDIO'} ${manifest.source} block=${block.index} fragment=${index + 1}: ${lastError}`);
@@ -258,7 +260,9 @@ async function main() {
   settings.environment = await runtimeEnvironment();
   settings.edgeCircuit = { open: false, reason: '' };
   await fs.mkdir(settings.cache, { recursive: true });
-  const queue = new TtsQueue(settings.edgeQueue);
+  let savedPacing = null;
+  try { savedPacing = JSON.parse(await fs.readFile(path.join(settings.cache, 'edge-pacing.json'), 'utf8')); } catch {}
+  const queue = new TtsQueue(settings.edgeQueue, { pacingState: savedPacing });
   const fragments = new FragmentCache(settings.cache, { validateAudio: validatePart });
   const log = path.join(settings.logs, 'generation.log');
   const edge = edgeClientInfo();
@@ -303,7 +307,10 @@ async function main() {
       manifest.totalBlocks = blocks.length;
       manifest.blocks ||= {};
       manifest.progress ||= {};
-      const deferred = Object.values(manifest.progress).map(retryAfterUntil).find((until) => until && until > Date.now());
+      const pendingCooldowns = Object.values(manifest.progress).filter((item) => item.status === 'COOLDOWN');
+      const deferred = pendingCooldowns
+        .filter((item) => item.retry_after || !settings.edgeQueue.immediateResumeWithoutRetryAfter)
+        .map(retryAfterUntil).find((until) => until && until > Date.now());
       if (deferred) {
         const detail = `Saved Retry-After is still active until ${new Date(deferred).toISOString()}`;
         const waitMs = deferred - Date.now();
@@ -313,6 +320,15 @@ async function main() {
         queue.halfOpen();
         for (const item of Object.values(manifest.progress)) if (item.status === 'COOLDOWN') { item.status = 'RECOVERING'; item.updated_at = new Date().toISOString(); }
         await saveManifest(manifestFile, manifest);
+      } else if (pendingCooldowns.length) {
+        // A persisted local cooldown without a server Retry-After is not a
+        // permanent lock. A restarted worker gets one ordinary half-open
+        // request for the same unfinished fragment; a new 429 starts a fresh
+        // conservative cooldown.
+        queue.halfOpen();
+        for (const item of pendingCooldowns) { item.status = 'RECOVERING'; item.updated_at = new Date().toISOString(); }
+        await saveManifest(manifestFile, manifest);
+        await logLine(log, `Restart resume: no server Retry-After; retrying the first unfinished fragment for ${relative}`);
       }
       for (const block of blocks) {
         if (cli['only-block'] && Number(cli['only-block']) !== block.index) continue;

@@ -24,12 +24,26 @@ test('queue remains sequential and respects local pacing', async () => {
   assert.ok(waits.some((wait) => wait >= 59_000));
 });
 
+test('adaptive pacing speeds up after successes and slows down after a rate limit', () => {
+  const queue = new TtsQueue({ min_interval_ms: 4000, adaptive_min_interval_ms: 3000, adaptive_max_interval_ms: 9000, adaptive_successes_before_speedup: 2, adaptive_step_down_ms: 250, adaptive_rate_limit_multiplier: 1.5 });
+  queue.recordSuccess();
+  assert.equal(queue.pacingSnapshot().intervalMs, 4000);
+  queue.recordSuccess();
+  assert.equal(queue.pacingSnapshot().intervalMs, 3750);
+  queue.recordRateLimit();
+  assert.equal(queue.pacingSnapshot().intervalMs, 5625);
+  const restored = new TtsQueue({ min_interval_ms: 4000, adaptive_min_interval_ms: 3000, adaptive_max_interval_ms: 9000 }, { pacingState: queue.pacingSnapshot() });
+  assert.equal(restored.pacingSnapshot().intervalMs, 5625);
+});
+
 test('configuration rejects an uncontrolled queue', () => {
   assert.throws(() => validateQueueConfig({ min_interval_ms: 0 }), /invalid/);
   assert.throws(() => validateQueueConfig({ concurrency: 2 }), /exactly 1/);
   assert.throws(() => validateQueueConfig({ max_requests_per_minute: 0 }), /invalid/);
   assert.throws(() => validateQueueConfig({ min_interval_ms: '5000' }), /invalid/);
   assert.throws(() => validateQueueConfig({ stop_on_http_429: 'yes' }), /true or false/);
+  assert.equal(validateQueueConfig({}).immediateResumeWithoutRetryAfter, true);
+  assert.throws(() => validateQueueConfig({ immediate_resume_without_retry_after: 'yes' }), /true or false/);
 });
 
 test('fragment key is deterministic and independent of temporary paths', () => {
@@ -100,6 +114,23 @@ test('corrupt cache and changed voice or rate are not reused', async (t) => {
   assert.equal(await cache.get(descriptor), null);
   assert.equal(await cache.get(fragmentDescriptor('same text', { ...settings, voice: 'ru-RU-SvetlanaNeural' })), null);
   assert.equal(await cache.get(fragmentDescriptor('same text', { ...settings, rate: '+5%' })), null);
+});
+
+test('verified cache resumes with size and SHA-256 checks without re-running FFmpeg', async (t) => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'voice-over-fast-cache-'));
+  t.after(() => fs.rm(root, { recursive: true, force: true }));
+  const source = path.join(root, 'source.mp3');
+  await fs.writeFile(source, 'valid-mp3-fast-cache');
+  let validations = 0;
+  const cache = new FragmentCache(root, { validateAudio: async (file) => { validations++; return validateAudio(file); } });
+  const descriptor = fragmentDescriptor('fast cache', settings);
+  await cache.save(descriptor, source);
+  assert.equal(validations, 1); // validation before the atomic cache commit
+  await cache.get(descriptor);
+  assert.equal(validations, 1);
+  const saved = cache.paths(descriptor);
+  await fs.appendFile(saved.audio, 'changed');
+  assert.equal(await cache.get(descriptor), null);
 });
 
 test('mocked HTTP 429 persists cooldown then automatically retries only the unfinished fragment', async (t) => {

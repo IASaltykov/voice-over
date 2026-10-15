@@ -20,11 +20,17 @@ socket_timeout_seconds = 30
 # Conservative local pacing; this is not a statement of any Microsoft limit.
 enabled = true
 concurrency = 1
-min_interval_ms = 7000
+min_interval_ms = 3500
 normal_jitter_min_ms = 0
-normal_jitter_max_ms = 3000
-max_requests_per_minute = 7
+normal_jitter_max_ms = 1500
+max_requests_per_minute = 10
 bucket_capacity = 1
+adaptive_enabled = true
+adaptive_min_interval_ms = 2500
+adaptive_max_interval_ms = 12000
+adaptive_successes_before_speedup = 5
+adaptive_step_down_ms = 250
+adaptive_rate_limit_multiplier = 1.5
 transient_max_attempts = 3
 transient_base_backoff_ms = 2000
 transient_max_backoff_ms = 30000
@@ -36,6 +42,9 @@ http_429_cooldown_seconds = [900, 1800, 3600, 7200]
 http_429_jitter_ratio = 0.10
 auto_resume_429 = true
 persist_cooldown = true
+# After a Docker/Node restart, resume immediately when the service supplied no
+# Retry-After value. An explicit server Retry-After is never bypassed.
+immediate_resume_without_retry_after = true
 max_429_events_per_run = 3
 http_403_max_retries = 1
 circuit_half_open_requests = 1

@@ -36,10 +36,21 @@ export class FragmentCache {
     try {
       const metadata = JSON.parse(await fs.readFile(files.metadata, 'utf8'));
       if (metadata.status !== 'completed' || metadata.text_sha256 !== descriptor.textSha256 || JSON.stringify(metadata.settings) !== JSON.stringify(descriptor.settings)) return null;
+      const stat = await fs.stat(files.audio);
+      // Established entries have already passed FFprobe and a full FFmpeg
+      // decode before their atomic commit. On resume, verifying length and
+      // content digest avoids spawning two processes for every cached part.
+      if (Number.isSafeInteger(metadata.audio_bytes) && metadata.audio_bytes !== stat.size) return null;
       const content = await fs.readFile(files.audio);
       if (!content.length || metadata.audio_sha256 !== sha256(content)) return null;
+      if (Number.isSafeInteger(metadata.audio_bytes) && metadata.verified_at) return { file: files.audio, metadata, duration: metadata.duration_seconds };
+      // Legacy cache entries are upgraded only after one full validation.
       const checked = await this.validateAudio(files.audio);
       if (!checked.valid) return null;
+      metadata.audio_bytes = stat.size;
+      metadata.duration_seconds = checked.duration;
+      metadata.verified_at = this.now();
+      await writeJsonAtomic(files.metadata, metadata);
       return { file: files.audio, metadata, duration: checked.duration };
     } catch { return null; }
   }
@@ -66,7 +77,7 @@ export class FragmentCache {
       if (!(await this.get(descriptor))) throw error;
     }
     const finalContent = await fs.readFile(files.audio);
-    const metadata = { status: 'completed', text_sha256: descriptor.textSha256, settings: descriptor.settings, audio_sha256: sha256(finalContent), duration_seconds: checked.duration, created_at: this.now() };
+    const metadata = { status: 'completed', text_sha256: descriptor.textSha256, settings: descriptor.settings, audio_sha256: sha256(finalContent), audio_bytes: finalContent.length, duration_seconds: checked.duration, created_at: this.now(), verified_at: this.now() };
     await writeJsonAtomic(files.metadata, metadata);
     return { file: files.audio, metadata, duration: checked.duration };
   }

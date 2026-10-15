@@ -128,7 +128,10 @@ are 15, 30, 60 and then 120 minutes, plus a positive 0–10% jitter. A supplied
 `Retry-After` is always treated as a minimum. These are application safety
 settings, not claimed Microsoft limits, and can be changed in `[edge_queue]`
 in `config.toml`. If Docker or Windows is stopped while waiting, the saved
-`next_retry_at` is honored at the next run before a request is sent.
+`next_retry_at` is honored at the next run when Edge supplied `Retry-After`.
+When no server retry time was supplied, a restarted worker immediately makes
+one normal half-open request for the same unfinished fragment; a new 429
+starts a new conservative cooldown.
 
 HTTP 403 is deliberately different: the program makes at most one diagnostic
 retry, persists `PAUSED_REQUIRES_ATTENTION`, and does not treat it as a rate
