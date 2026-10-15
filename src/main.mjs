@@ -20,7 +20,7 @@ const PLAIN_DOCUMENTS = new Set(['.txt', '.md', '.markdown', '.pdf']);
 
 function args(argv) {
   const result = { _: [] };
-  const booleans = new Set(['force', 'check', 'dry-run', 'analyze-only', 'review-chapters', 'apply-review']);
+  const booleans = new Set(['force', 'check', 'dry-run', 'analyze-only', 'review-chapters', 'apply-review', 'url-only']);
   for (let index = 0; index < argv.length; index++) {
     const value = argv[index];
     if (!value.startsWith('--')) result._.push(value);
@@ -274,7 +274,7 @@ async function main() {
   if (cli.check || !inspectionOnly) await audio.requireTools();
   if (cli.check) { await logLine(log, 'Dependency check passed'); return 0; }
   if (!(await fs.stat(settings.input).catch(() => null))) throw new Error(`Input not found: ${settings.input}`);
-  const localFiles = cli.only ? [path.resolve(settings.input, cli.only)] : await discover(settings.input);
+  const localFiles = cli['url-only'] ? [] : (cli.only ? [path.resolve(settings.input, cli.only)] : await discover(settings.input));
   const directUrls = cli.url ? (Array.isArray(cli.url) ? cli.url : [cli.url]) : [];
   const urlSources = await materializeUrls(settings.input, settings.cache, directUrls);
   const files = [...localFiles.map((file) => ({ file, relative: path.relative(settings.input, file) })), ...urlSources];

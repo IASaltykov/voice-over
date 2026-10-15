@@ -35,6 +35,7 @@ audio_slides/
 cache/
 logs/
 models/
+engines/
 *.mp3
 *.wav
 *.ogg
@@ -53,7 +54,6 @@ chapters_review.json
 *.pdf
 *.zip
 !README.md
-!TEST_REPORT.md
 !examples/
 !examples/**
 

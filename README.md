@@ -26,6 +26,13 @@ Node.js-проект для создания MP3 из TXT, Markdown, FB2, FB2.ZI
 docker compose run --rm voice-over --url "https://example.org/article"
 ```
 
+Добавьте `--url-only`, если нужно обработать только переданную ссылку или
+`urls.txt`, не обходя другие документы, уже находящиеся в `input/`:
+
+```powershell
+docker compose run --rm voice-over --url "https://example.org/article" --url-only
+```
+
 Загрузчик принимает только публичные HTTP/HTTPS-адреса, проверяет DNS при каждом перенаправлении, не допускает localhost/частные сети, ограничивает размер и число перенаправлений и не выполняет JavaScript страницы. Очищенный источник сохраняется в `cache/sources/`; готовое аудио использует тот же кеш фрагментов и механизм возобновления, что и локальная книга. Если HTML не даёт достаточно содержательного текста, озвучивание не запускается.
 
 EPUB читается по `spine` из `META-INF/container.xml`; DRM и сканированные PDF не поддерживаются.
@@ -120,8 +127,9 @@ docker compose run --rm --entrypoint node voice-over tests/edge-connection.mjs
 ## Smart Queue, fragment cache, and resume
 
 Every Edge TTS request goes through one sequential queue. The conservative
-defaults in `config.toml` are one active request, a 5,000 ms minimum interval,
-and no more than 8 requests per minute. These are local safety controls, not a
+defaults in `config.toml` are one active request, a 3,500 ms minimum interval
+plus up to 1,500 ms positive jitter, and no more than 10 requests per minute.
+These are local safety controls, not a
 claim about a Microsoft limit. Change `[edge_queue]` only if you understand
 that a lower delay can make `HTTP 429` more likely.
 
