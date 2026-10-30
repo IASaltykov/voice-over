@@ -34,17 +34,19 @@ if not exist "docker-compose.yml" if not exist "compose.yaml" if not exist "comp
 if not exist "input" mkdir "input" >nul 2>nul
 if not exist "output" mkdir "output" >nul 2>nul
 if not exist "cache" mkdir "cache" >nul 2>nul
+if not exist "data" mkdir "data" >nul 2>nul
 if not exist "%LOG_DIR%" mkdir "%LOG_DIR%" >nul 2>nul
 
-for /f "usebackq delims=" %%S in (`docker compose config --services 2^>nul`) do if not defined SERVICE set "SERVICE=%%S"
+if "%~1"=="" set "SERVICE=article-studio"
+if not defined SERVICE for /f "usebackq delims=" %%S in (`docker compose config --services 2^>nul`) do if not defined SERVICE set "SERVICE=%%S"
 if not defined SERVICE (
   call :fail "Could not determine a service from the Compose configuration."
   goto :end
 )
 
 set "FOUND_INPUT="
-for /r "input" %%F in (*.txt *.md *.markdown *.fb2 *.pdf *.zip) do set "FOUND_INPUT=1"
-if not defined FOUND_INPUT (
+for /r "input" %%F in (*.txt *.md *.markdown *.fb2 *.pdf *.zip *.epub *.docx *.html *.htm *.xhtml) do set "FOUND_INPUT=1"
+if not defined FOUND_INPUT if not "%SERVICE%"=="article-studio" (
   call :fail "The input folder has no TXT, Markdown, FB2, FB2.ZIP, or PDF documents."
   goto :end
 )
@@ -76,7 +78,8 @@ if not "%RUN_CODE%"=="0" (
 )
 
 echo.
-echo Completed. Results are in output. Logs are in %RUN_LOG% and logs\generation.log.
+if "%SERVICE%"=="article-studio" echo Article Studio completed. Persistent task data is in data.
+if not "%SERVICE%"=="article-studio" echo Completed. Results are in output. Logs are in %RUN_LOG% and logs\generation.log.
 goto :end
 
 :fail

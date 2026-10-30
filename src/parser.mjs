@@ -5,8 +5,9 @@ import { XMLParser } from 'fast-xml-parser';
 import { extractPdf } from './pdf.mjs';
 import { extractArticle } from './web.mjs';
 import { parseEpubBuffer } from './epub.mjs';
+import { parseDocxBuffer } from './docx.mjs';
 
-const SUPPORTED = new Set(['.txt', '.md', '.markdown', '.fb2', '.pdf', '.html', '.htm', '.xhtml', '.epub']);
+const SUPPORTED = new Set(['.txt', '.md', '.markdown', '.fb2', '.pdf', '.html', '.htm', '.xhtml', '.epub', '.docx']);
 const DIVIDER = /^\s*#(?:\s+(.*?))?\s*$/;
 const MAX_ZIP_ENTRIES = 100;
 const MAX_ZIP_UNCOMPRESSED_BYTES = 50 * 1024 * 1024;
@@ -83,6 +84,7 @@ export function parseBuffer(buffer, extension, sourceName = '') {
   const ext = extension.toLowerCase();
   if (ext === '.fb2') return fb2Blocks(buffer.toString('utf8'));
   if (ext === '.epub') return parseEpubBuffer(buffer).blocks;
+  if (ext === '.docx') return parseDocxBuffer(buffer).blocks;
   if (['.html', '.htm', '.xhtml'].includes(ext)) return [{ index: 1, ...extractArticle(buffer, { sourceUrl: sourceName }) }];
   const text = buffer.toString('utf8').replace(/^\uFEFF/, '');
   return parseDelimited(text, ['.md', '.markdown'].includes(ext));
@@ -113,6 +115,7 @@ export async function parseFileDetails(file, options = {}) {
     const epub = parseEpubBuffer(await fs.readFile(file));
     return { blocks: epub.blocks, metadata: epub.metadata };
   }
+  if (path.extname(file).toLowerCase() === '.docx') return parseDocxBuffer(await fs.readFile(file));
   return { blocks: parseBuffer(await fs.readFile(file), path.extname(file), file) };
 }
 

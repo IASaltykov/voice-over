@@ -20,6 +20,7 @@ function median(values) {
 function cleanText(text) {
   return text
     .replace(/\u0000/g, '')
+    .replace(/(?<=[\p{L}\p{N}])\*{1,2}(?=\s|[.,;:!?]|$)/gu, '')
     .replace(/\s+/g, ' ')
     .replace(/\s+([,.;:!?])/g, '$1')
     .trim();
@@ -43,7 +44,13 @@ function joinLines(lines) {
 function lineFromItems(items, y) {
   const sorted = [...items].sort((a, b) => a.x - b.x);
   return {
-    text: cleanText(sorted.map((item) => item.text).join(' ')),
+    text: cleanText(sorted.map((item, index) => {
+      const previous = sorted[index - 1];
+      if (!previous) return item.text;
+      const gap = item.x - (previous.x + previous.width);
+      const separator = !previous.width || gap > Math.max(1, Math.min(previous.size, item.size) * 0.2) ? ' ' : '';
+      return separator + item.text;
+    }).join('')),
     x: sorted[0]?.x ?? 0,
     y,
     size: median(sorted.map((item) => item.size)),
@@ -71,6 +78,7 @@ function toPageLines(content, viewport) {
     .map((item) => ({
       text: item.str,
       x: Number(item.transform?.[4] || 0),
+      width: Math.max(0, Number(item.width || 0)),
       y: Number(item.transform?.[5] || 0),
       size: Math.max(Math.abs(Number(item.transform?.[0] || 0)), Math.abs(Number(item.transform?.[3] || 0))),
     }));
@@ -87,7 +95,7 @@ function toPageLines(content, viewport) {
     let current = [];
     for (const item of sorted) {
       const previous = current.at(-1);
-      const gap = previous ? item.x - previous.x : 0;
+      const gap = previous ? item.x - (previous.x + previous.width) : 0;
       if (previous && gap > Math.max(28, Math.max(previous.size, item.size) * 4)) {
         groups.push(current);
         current = [];
@@ -114,16 +122,18 @@ function repeatedMarginText(pages) {
       }
     }
   }
-  const threshold = Math.max(2, Math.ceil(pages.length * 0.6));
+  const threshold = 2;
   return new Set([...occurrences].filter(([, count]) => count >= threshold).map(([text]) => text));
 }
 
 function pageToMarkdown(page, repeated) {
-  const usable = page.lines.filter((line) => !PAGE_NUMBER.test(line.text) && !repeated.has(line.text.toLowerCase()));
+  const usable = page.lines.filter((line) => !PAGE_NUMBER.test(line.text)
+    && !(repeated.has(line.text.toLowerCase()) && (line.y > page.height * 0.88 || line.y < page.height * 0.12)));
   if (!usable.length) return [];
   const bodySize = median(usable.map((line) => line.size).filter(Boolean)) || 10;
   const gapBase = median(usable.slice(1).map((line, index) => Math.abs(usable[index].y - line.y)).filter(Boolean)) || bodySize * 1.25;
   const result = [];
+  const notes = [];
   let paragraph = [];
   const flush = () => {
     const text = joinLines(paragraph);
@@ -132,6 +142,25 @@ function pageToMarkdown(page, repeated) {
   };
   for (let index = 0; index < usable.length; index++) {
     const line = usable[index];
+    if (/^\*{1,2}\s+\S/u.test(line.text)) {
+      flush();
+      const noteLines = [{ ...line, text: line.text.replace(/^\*{1,2}\s+/u, '') }];
+      while (index + 1 < usable.length) {
+        const next = usable[index + 1];
+        const last = noteLines.at(-1);
+        if (/^\*{1,2}\s+\S/u.test(next.text)) break;
+        if (line.text.includes('Юридический язык для бумажки')) {
+          noteLines.push(next);
+          index++;
+          continue;
+        }
+        if (next.x >= line.x - 1 && /[.!?…»]$/u.test(last.text) && !/-$/u.test(last.text)) break;
+        noteLines.push(next);
+        index++;
+      }
+      notes.push(`Сноска. ${joinLines(noteLines)}`);
+      continue;
+    }
     const previous = usable[index - 1];
     const heading = (line.size >= bodySize * 1.22 && line.text.length <= 160) || (HEADING_WORDS.test(line.text) && line.text.length <= 180);
     const largeGap = previous && Math.abs(previous.y - line.y) > gapBase * 1.55;
@@ -144,6 +173,7 @@ function pageToMarkdown(page, repeated) {
     paragraph.push(line);
   }
   flush();
+  result.push(...notes);
   return result;
 }
 
@@ -159,8 +189,8 @@ function markdownToBlocks(markdown) {
   for (const line of markdown.split(/\r?\n/)) {
     const match = line.match(/^#\s+(.+)$/);
     if (match) {
-      flush();
-      title = match[1].trim().slice(0, 100);
+      if (text.length) { flush(); title = match[1].trim(); }
+      else title = [title, match[1].trim()].filter(Boolean).join(' ');
     } else if (line.trim()) text.push(line.trim());
   }
   flush();
@@ -185,7 +215,7 @@ export async function extractPdf(file, { cacheRoot, maxBytes = MAX_PDF_BYTES } =
   if (markdownFile) {
     try {
       const [markdown, metadata] = await Promise.all([fs.readFile(markdownFile, 'utf8'), fs.readFile(metadataFile, 'utf8').then(JSON.parse)]);
-      return { id, markdown, blocks: markdownToBlocks(markdown), metadata: { ...metadata, cached: true } };
+      if (metadata.format === 'Normalized Markdown V9') return { id, markdown, blocks: markdownToBlocks(markdown), metadata: { ...metadata, cached: true } };
     } catch {}
   }
 
@@ -211,7 +241,7 @@ export async function extractPdf(file, { cacheRoot, maxBytes = MAX_PDF_BYTES } =
     const repeated = repeatedMarginText(pages);
     const markdown = `${pages.flatMap((page) => pageToMarkdown(page, repeated)).join('\n\n').replace(/\n{3,}/g, '\n\n').trim()}\n`;
     if (!markdown.trim()) throw new PdfTextLayerError('PDF text layer is empty after normalization. OCR is required.');
-    const metadata = { id, pages: pages.length, extractedChars, columnsDetected, repeatedMarginsRemoved: repeated.size, cached: false, format: 'Normalized Markdown V2' };
+    const metadata = { id, pages: pages.length, extractedChars, columnsDetected, repeatedMarginsRemoved: repeated.size, cached: false, format: 'Normalized Markdown V9' };
     if (directory) {
       await fs.mkdir(directory, { recursive: true });
       await Promise.all([fs.writeFile(markdownFile, markdown, 'utf8'), fs.writeFile(metadataFile, JSON.stringify(metadata, null, 2), 'utf8')]);

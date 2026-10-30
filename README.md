@@ -2,6 +2,89 @@
 
 Node.js-проект для создания MP3 из TXT, Markdown, FB2, FB2.ZIP и PDF. Единственный движок синтеза речи — Microsoft Edge TTS. Локальные модели, GPU, Piper, Silero, Qwen, llama.cpp и Python не используются.
 
+## Article Studio: стандартная обработка
+
+Двойной запуск `start-docker.bat` без аргументов открывает интерактивный
+**Article Studio**. Первый и выбранный по умолчанию пункт меню — «Стандартная
+обработка». Он сканирует `input/` и показывает только новые, прерванные,
+ошибочные или частично завершённые документы. Корректно завершённые документы
+попадают в библиотеку и не отображаются в очереди повторно.
+
+В стандартном конвейере документ получает SHA-256-идентификатор, определяется
+его язык, при необходимости переводится на русский, проходит отдельную
+подготовку произношения и озвучивается Edge TTS. Исходный файл не меняется:
+копия оригинала, перевод, подготовленный текст, метаданные и состояние задачи
+сохраняются в `data/documents/<sha256>/`; MP3 находятся в
+`output/standard/<sha256>/`.
+
+Стандартные настройки находятся в `[standard_processing]` файла `config.toml`:
+
+```toml
+voice = "ru-RU-DmitryNeural"
+rate = "+0%"
+auto_translate = true
+pronunciation_enabled = true
+```
+
+### TranslateGemma 4B на сервере
+
+Проект **не содержит и не скачивает модель** TranslateGemma на компьютер
+пользователя. Для перевода на сервере должен быть отдельно развёрнут
+совместимый с OpenAI Chat Completions HTTP endpoint. После переноса укажите
+его URL в `config.toml`:
+
+```toml
+[standard_processing]
+translation_provider = "translategemma_openai"
+translation_model = "TranslateGemma-4B"
+translation_endpoint = "http://translation-server:8080/v1/chat/completions"
+```
+
+Если endpoint не задан, английский документ сохраняется со статусом
+`WAITING_TRANSLATOR`: он не переводится повторно и не озвучивается ошибочно на
+английском. После настройки endpoint достаточно снова выбрать его в очереди.
+Секрет, если он потребуется серверу, передаётся через переменную окружения
+`TRANSLATEGEMMA_API_KEY`, а не хранится в репозитории.
+
+### Переключатели AI-этапов в `.env`
+
+Скопируйте `.env.example` в `.env` только на целевой машине или сервере:
+
+```powershell
+Copy-Item .env.example .env
+```
+
+Доступны три независимых флага со строгими значениями `true` или `false`:
+
+```env
+AI_LANGUAGE_DETECTION_ENABLED=true
+AI_TRANSLATION_ENABLED=false
+AI_PRONUNCIATION_ENABLED=true
+```
+
+Приоритет настроек: переменные операционной системы, затем `.env`, затем
+`config.toml`. Edge TTS не управляется этими флагами. Если определение языка
+выключено, Article Studio попросит выбрать язык. Если перевод выключен для
+нерусского текста, Studio предложит оставить документ ожидающим перевода либо
+явно озвучить оригинал; в неинтерактивном запуске документ безопасно остаётся
+в `WAITING_TRANSLATOR`. При отключённой подготовке произношения текст
+передаётся в Edge TTS без словаря ударений.
+
+### Подготовка произношения
+
+Этап произношения выключаемый и не меняет оригинал или перевод. Он применяет
+только небольшой консервативный словарь и пользовательские исключения из
+`data/pronunciation-exceptions.json`, например:
+
+```json
+{ "договор": "догово́р", "замок": "замо́к" }
+```
+
+Используется Unicode combining acute. Неоднозначные омографы без явного
+словарного правила не изменяются: этот этап улучшает подготовку текста, но не
+может гарантировать правильную интонацию без прослушивания результата в
+конкретной версии Edge TTS.
+
 ## Быстрый запуск в Windows через Docker
 
 1. Установите и запустите Docker Desktop.
@@ -148,10 +231,8 @@ are 15, 30, 60 and then 120 minutes, plus a positive 0–10% jitter. A supplied
 `Retry-After` is always treated as a minimum. These are application safety
 settings, not claimed Microsoft limits, and can be changed in `[edge_queue]`
 in `config.toml`. If Docker or Windows is stopped while waiting, the saved
-`next_retry_at` is honored at the next run when Edge supplied `Retry-After`.
-When no server retry time was supplied, a restarted worker immediately makes
-one normal half-open request for the same unfinished fragment; a new 429
-starts a new conservative cooldown.
+`next_retry_at` is honored at the next run, including locally scheduled cooldowns.
+The shared cache also records the cooldown so another document cannot bypass it.
 
 HTTP 403 is deliberately different: the program makes at most one diagnostic
 retry, persists `PAUSED_REQUIRES_ATTENTION`, and does not treat it as a rate
@@ -160,3 +241,11 @@ cooldown and recovery events without secrets, request URLs or credentials.
 
 The Docker Compose bind mounts keep `output/`, `cache/`, and `logs/` on the
 host, so progress survives a container, Docker Desktop, or Windows restart.
+
+## Обновление и сохранение существующих результатов
+
+Синтез выполняется только через онлайн Edge TTS; доступность, лимиты и качество зависят от сервиса. HTTP 429 сохраняет фрагменты и время повторной попытки в общем кеше, включая паузу после перезапуска. При временной сетевой ошибке число попыток ограничено настройками. Конфигурация CLI находится в `config.toml`, состояние книги — в `.manifest.json` в её папке результата, а проверенные фрагменты — в `cache/tts`. Не удаляйте эти файлы, если планируется возобновление.
+
+Новый генератор занимает `cache/edge-worker.lock`, поэтому процессы, использующие один cache, не могут работать одновременно. Старые версии программы об этой блокировке не знают: перед обновлением дождитесь завершения старого процесса. Если процесс аварийно завершился и оставил блокировку, проверьте PID и имя компьютера внутри файла и удалите блокировку только после проверки, что владелец не работает. Анализ и проверка зависимостей не занимают блокировку.
+
+Имена новых файлов строятся по извлечённым названиям, без привязки к индексам конкретных книг. Старые MP3 не переименовываются и не считаются автоматически соответствующими новым блокам: при несовпадении происхождения создаётся имя с хешем. Изменения извлечения PDF и настроек могут потребовать нового синтеза; сохранённые фрагменты с совпадающими текстом и настройками повторно используются. Проверьте `chapters_review.json` после `--analyze-only`: распознавание структуры PDF эвристическое и не гарантирует правильный порядок сложных страниц. Для сканов требуется внешнее OCR.

@@ -2,17 +2,19 @@ import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { parse as parseToml } from 'smol-toml';
+import { readConfig } from './config.mjs';
+import { readManifest, saveManifest } from './manifest.mjs';
 import { discover, parseFileDetails } from './parser.mjs';
-import { splitText } from './segmenter.mjs';
+import { splitText, splitSentences } from './segmenter.mjs';
 import { normalizeForSpeech } from './speech-normalizer.mjs';
 import { verifyBlockSegmentation, verifyDocumentBlocks } from './integrity.mjs';
 import { isCurrentOutput } from './cache.mjs';
 import { FragmentCache, fragmentDescriptor, writeJsonAtomic } from './fragment-cache.mjs';
-import { QueuePausedError, TtsQueue, jitterDelay, next429RetryAt, validateQueueConfig } from './tts-queue.mjs';
+import { QueuePausedError, TtsQueue, jitterDelay, next429RetryAt } from './tts-queue.mjs';
 import { detectPlain, cacheKey } from './chapters.mjs';
 import { materializeUrls } from './sources.mjs';
 import * as audio from './audio.mjs';
+import { acquireWorkerLock } from './worker-lock.mjs';
 import { classifyEdgeError, edgeClientInfo, formatEdgeDiagnostic, runtimeEnvironment, synthesizeEdge } from './edge.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -20,7 +22,7 @@ const PLAIN_DOCUMENTS = new Set(['.txt', '.md', '.markdown', '.pdf']);
 
 function args(argv) {
   const result = { _: [] };
-  const booleans = new Set(['force', 'check', 'dry-run', 'analyze-only', 'review-chapters', 'apply-review', 'url-only']);
+  const booleans = new Set(['force', 'check', 'dry-run', 'analyze-only', 'review-chapters', 'apply-review', 'url-only', 'pre-normalized', 'sentence-by-sentence']);
   for (let index = 0; index < argv.length; index++) {
     const value = argv[index];
     if (!value.startsWith('--')) result._.push(value);
@@ -34,20 +36,6 @@ function args(argv) {
 
 function digest(value) { return crypto.createHash('sha256').update(JSON.stringify(value)).digest('hex'); }
 function documentDestination(output, relative) { return path.join(output, relative.replace(/\.fb2\.zip$/i, '').replace(/\.[^.]+$/, '')); }
-
-async function readConfig(file) {
-  const config = parseToml(await fs.readFile(file, 'utf8'));
-  const root = path.dirname(file);
-  const resolve = (value, fallback) => path.resolve(root, value || fallback);
-  return {
-    input: resolve(config.paths?.input, 'input'), output: resolve(config.paths?.output, 'output'), cache: resolve(config.paths?.cache, 'cache'), logs: resolve(config.paths?.logs, 'logs'),
-    voice: config.tts?.voice || 'ru-RU-DmitryNeural', rate: config.tts?.rate || '-5%', retries: Math.max(1, Number(config.tts?.retries || 4)), pitch: config.tts?.pitch || '+0Hz', volume: config.tts?.volume || '+0%', audioFormat: config.tts?.audio_format || 'audio-24khz-48kbitrate-mono-mp3',
-    timeout: Math.max(5, Number(config.tts?.timeout_seconds || 90)), socketTimeoutSeconds: Math.max(5, Number(config.tts?.socket_timeout_seconds || 30)), maxChars: Number(config.segmentation?.max_chars || 700), minChars: Number(config.segmentation?.min_chars || 150),
-    quality: String(config.audio?.mp3_quality || '2'), chapterMode: config.chapter_detection?.mode || 'auto', targetMaxWords: Number(config.chapter_detection?.target_max_words || 5000),
-    pdf: { maxBytes: Number(config.pdf?.max_bytes || 262144000) },
-    edgeQueue: validateQueueConfig(config.edge_queue || {}),
-  };
-}
 
 async function logLine(file, message) {
   await fs.mkdir(path.dirname(file), { recursive: true });
@@ -70,12 +58,6 @@ function humanDuration(milliseconds) {
 async function waitForCooldown(milliseconds, settings) {
   const delay = Math.max(0, milliseconds);
   if (delay) await (settings.sleep || ((ms) => new Promise((resolve) => setTimeout(resolve, ms))))(delay);
-}
-
-function withTimeout(promise, seconds, label) {
-  let timer;
-  const timeout = new Promise((_, reject) => { timer = setTimeout(() => reject(new Error(`${label} timed out after ${seconds} seconds`)), seconds * 1000); });
-  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
 }
 
 function retryAfterUntil(progress) {
@@ -109,37 +91,35 @@ async function validatePart(file) {
   return decoded.valid ? { valid: true, duration: probed.duration } : { valid: false, code: decoded.code || 'INVALID_AUDIO', detail: `MP3 decoding (ffmpeg): ${decoded.detail}` };
 }
 
-async function saveManifest(file, manifest) {
-  // Keep one known-good snapshot. The fragment cache remains authoritative for
-  // unfinished blocks even if both manifest files are later unreadable.
-  try { JSON.parse(await fs.readFile(file, 'utf8')); await fs.copyFile(file, `${file}.last-good.json`); } catch {}
-  await writeJsonAtomic(file, manifest);
-}
-
-async function readManifest(file) {
-  try { return JSON.parse(await fs.readFile(file, 'utf8')); } catch (error) {
-    try { return JSON.parse(await fs.readFile(`${file}.last-good.json`, 'utf8')); } catch {}
-    if (error?.code !== 'ENOENT') {
-      const preserved = `${file}.corrupt-${Date.now()}.json`;
-      await fs.rename(file, preserved).catch(() => {});
-    }
-    return {};
-  }
+export function outputFilename(block, manifest) {
+  const original = String(block.title || '').trim();
+  const match = original.match(/^(?:(?:\u0413\u043b\u0430\u0432\u0430|chapter)\s+)?(\d{1,4})(?:[.\s:?-]+)(.*)$/iu);
+  const explicit = Number(block.chapterNumber);
+  const number = Number.isSafeInteger(explicit) && explicit > 0 ? explicit : Number(match?.[1] || block.index);
+  const prefix = String(number).padStart(Math.max(2, String(manifest.totalBlocks).length), '0');
+  const title = String(match ? match[2] : original).replace(/[<>:"/\\|?*\x00-\x1f]/g, '_').replace(/[. ]+$/g, '').trim().slice(0, 140);
+  return `${prefix}${title ? ` ${title}` : ''}.mp3`;
 }
 
 async function speakBlock(block, destination, settings, manifest, manifestFile, log, queue, fragments) {
-  const width = Math.max(2, String(manifest.totalBlocks).length);
-  const title = block.title.replace(/[<>:"/\\|?*]/g, '_').trim();
-  const filename = `${String(block.index).padStart(width, '0')}${title ? ` ${title}` : ''}.mp3`;
-  const target = path.join(destination, filename);
-  const spokenText = normalizeForSpeech(block.text);
+  let filename = outputFilename(block, manifest);
+  const chapterTitle = block.title ? `${block.title}.` : '';
+  const spokenText = settings.preNormalized ? block.text : normalizeForSpeech(`${chapterTitle} ${block.text}`.trim());
   const textHash = digest({ original: block.text, spoken: spokenText });
-  const configHash = digest({ voice: settings.voice, rate: settings.rate, maxChars: settings.maxChars, engine: 'edge', client: 'node-edge-tts', normalizer: 1, version: 4 });
+  const configHash = digest({ voice: settings.voice, rate: settings.rate, pitch: settings.pitch, volume: settings.volume, audioFormat: settings.audioFormat, maxChars: settings.maxChars, sentenceBySentence: settings.sentenceBySentence, engine: 'edge', client: 'node-edge-tts', normalizer: settings.preNormalized ? 0 : 1, version: 4 });
   const previous = manifest.blocks[String(block.index)];
+  // Never replace an existing file whose source/configuration cannot be proved.
+  if (await fs.stat(path.join(destination, filename)).catch(() => null)) {
+    if (previous?.filename !== filename || previous?.textHash !== textHash || previous?.configHash !== configHash) {
+      filename = filename.replace(/\.mp3$/i, ` [${textHash.slice(0, 10)}-${configHash.slice(0, 8)}].mp3`);
+      if (await fs.stat(path.join(destination, filename)).catch(() => null) && (previous?.filename !== filename || previous?.textHash !== textHash || previous?.configHash !== configHash)) throw new Error(`Existing output has no matching provenance: ${filename}`);
+    }
+  }
+  const target = path.join(destination, filename);
   if (!settings.force && await isCurrentOutput({ target, previous, textHash, configHash, filename, probe: audio.probe })) return { status: 'skipped', filename };
   if (settings.edgeCircuit?.open) return { status: 'paused', filename, detail: settings.edgeCircuit.reason };
 
-  const chunks = splitText(spokenText, settings.maxChars, settings.minChars);
+  const chunks = settings.sentenceBySentence ? splitSentences(spokenText, settings.maxChars, settings.minChars) : splitText(spokenText, settings.maxChars, settings.minChars);
   const integrity = verifyBlockSegmentation(spokenText, chunks);
   if (!integrity.ok) throw new Error(`Text integrity check failed for block ${block.index}: ${integrity.detail}`);
   await logLine(log, `${manifest.source} block=${block.index}: chars=${block.text.length}, fragments=${chunks.length}, lengths=${JSON.stringify(chunks.map((part) => part.length))}`);
@@ -169,8 +149,8 @@ async function speakBlock(block, destination, settings, manifest, manifestFile, 
       try { while (!success) {
         attempt++;
         try {
-          await logLine(log, `TTS request: ${manifest.source} block=${block.index} fragment=${index + 1}/${chunks.length} attempt=${attempt}/${settings.retries}`);
-          await queue.run(() => withTimeout((settings.synthesize || synthesizeEdge)(chunks[index], part, settings), settings.timeout, 'Edge TTS request'));
+          await logLine(log, `TTS request: ${manifest.source} block=${block.index} fragment=${index + 1}/${chunks.length} attempt=${attempt}/${maxAttempts}`);
+          await queue.run(() => (settings.synthesize || synthesizeEdge)(chunks[index], part, settings));
         } catch (error) {
           if (error instanceof QueuePausedError) {
             progress.status = 'paused'; progress.reason = error.reason; progress.updated_at = new Date().toISOString();
@@ -180,7 +160,7 @@ async function speakBlock(block, destination, settings, manifest, manifestFile, 
           const diagnosis = classifyEdgeError(error);
           lastError = `${diagnosis.code}: ${diagnosis.message}`;
           await fs.rm(part, { force: true });
-          await logLine(log, formatEdgeDiagnostic({ environment: settings.environment, voice: settings.voice, attempt, attempts: settings.retries, error: diagnosis }));
+          await logLine(log, formatEdgeDiagnostic({ environment: settings.environment, voice: settings.voice, attempt, attempts: maxAttempts, error: diagnosis }));
           await logLine(log, `TTS failure: ${manifest.source} block=${block.index} fragment=${index + 1} attempt=${attempt}: ${lastError}`);
           if (diagnosis.httpStatus === 403 && attempt <= settings.edgeQueue.http403MaxRetries) {
             await logLine(log, `HTTP 403 diagnostic retry: ${manifest.source} block=${block.index} fragment=${index + 1} retry=${attempt}/${settings.edgeQueue.http403MaxRetries}`);
@@ -193,7 +173,7 @@ async function speakBlock(block, destination, settings, manifest, manifestFile, 
             const next = next429RetryAt({ retryAfter: diagnosis.retryAfter, event: events, config: settings.edgeQueue });
             const waitMs = Math.max(0, next - Date.now());
             const pacing = queue.recordRateLimit();
-            await writeJsonAtomic(path.join(settings.cache, 'edge-pacing.json'), pacing);
+            await writeJsonAtomic(path.join(settings.cache, 'edge-pacing.json'), { ...pacing, nextRetryAt: new Date(next).toISOString() });
             queue.pause(`HTTP 429 until ${new Date(next).toISOString()}`);
             progress.status = 'COOLDOWN'; progress.reason = 'HTTP_429'; progress.retry_after = diagnosis.retryAfter;
             progress.next_retry_at = new Date(next).toISOString(); progress.consecutive_429 = events;
@@ -218,7 +198,8 @@ async function speakBlock(block, destination, settings, manifest, manifestFile, 
             await saveManifest(manifestFile, manifest);
             return { status: 'paused', filename, detail: lastError, completed: index, total: chunks.length, diagnosis };
           }
-          if (attempt < maxAttempts && diagnosis.retryable) await waitForCooldown(jitterDelay(settings.edgeQueue.retryJitter, settings.edgeQueue.transientBaseBackoffMs, settings.edgeQueue.transientMaxBackoffMs, attempt - 1), settings);
+          if (diagnosis.retryable && attempt >= maxAttempts) break;
+          if (diagnosis.retryable) await waitForCooldown(jitterDelay(settings.edgeQueue.retryJitter, settings.edgeQueue.transientBaseBackoffMs, settings.edgeQueue.transientMaxBackoffMs, attempt - 1), settings);
           if (!diagnosis.retryable) break;
           continue;
         }
@@ -250,10 +231,12 @@ async function speakBlock(block, destination, settings, manifest, manifestFile, 
     return { status: 'created', filename, duration: merged.duration };
 }
 
-async function main() {
+async function runMain() {
   const cli = args(process.argv.slice(2));
   const settings = await readConfig(path.resolve(cli.config || path.join(ROOT, 'config.toml')));
   settings.force = Boolean(cli.force);
+  settings.preNormalized = Boolean(cli['pre-normalized']);
+  settings.sentenceBySentence = Boolean(cli['sentence-by-sentence']);
   settings.voice = cli.voice || settings.voice;
   settings.rate = cli.rate || settings.rate;
   settings.maxChars = Number(cli['max-chars'] || settings.maxChars);
@@ -266,11 +249,27 @@ async function main() {
   let savedPacing = null;
   try { savedPacing = JSON.parse(await fs.readFile(path.join(settings.cache, 'edge-pacing.json'), 'utf8')); } catch {}
   const queue = new TtsQueue(settings.edgeQueue, { pacingState: savedPacing });
+  settings.savedCooldown = savedPacing?.nextRetryAt;
   const fragments = new FragmentCache(settings.cache, { validateAudio: validatePart });
   const log = path.join(settings.logs, 'generation.log');
   const edge = edgeClientInfo();
   await logLine(log, `Node Edge-only TTS start: node=${process.version} environment=${settings.environment} voice=${settings.voice} rate=${settings.rate} edge_client=${edge.library}@${edge.version}`);
   const inspectionOnly = cli['analyze-only'] || cli['review-chapters'] || cli['dry-run'];
+  if (!inspectionOnly && !cli.check) {
+    const release = await acquireWorkerLock(settings.cache);
+    try {
+      const until = Date.parse(settings.savedCooldown || '');
+      if (Number.isFinite(until) && until > Date.now()) {
+        await logLine(log, `Shared Edge cooldown until ${new Date(until).toISOString()}`);
+        await waitForCooldown(until - Date.now(), settings);
+      }
+      return await processDocuments(cli, settings, queue, fragments, log, inspectionOnly);
+    } finally { await release(); }
+  }
+  return processDocuments(cli, settings, queue, fragments, log, inspectionOnly);
+}
+
+async function processDocuments(cli, settings, queue, fragments, log, inspectionOnly) {
   if (cli.check || !inspectionOnly) await audio.requireTools();
   if (cli.check) { await logLine(log, 'Dependency check passed'); return 0; }
   if (!(await fs.stat(settings.input).catch(() => null))) throw new Error(`Input not found: ${settings.input}`);
@@ -367,4 +366,4 @@ async function main() {
 export const mainInternals = { speakBlock, readManifest, retryAfterUntil, waitForCooldown, humanDuration };
 
 const invokedAsScript = process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url);
-if (invokedAsScript) main().then((code) => { process.exitCode = code; }).catch((error) => { console.error(error.stack || error.message); process.exitCode = 1; });
+if (invokedAsScript) runMain().then((code) => { process.exitCode = code; }).catch((error) => { console.error(error.stack || error.message); process.exitCode = 1; });

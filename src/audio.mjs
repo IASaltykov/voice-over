@@ -35,6 +35,7 @@ export async function mergeMp3(parts, destination, quality = '2') {
     const result = await run(tool('ffmpeg'), ['-hide_banner', '-loglevel', 'error', '-y', '-f', 'concat', '-safe', '0', '-i', list, '-vn', '-c:a', 'libmp3lame', '-q:a', quality, building]);
     if (result.code !== 0) return { ok: false, detail: result.stderr.trim() };
     const checked = await probe(building); if (!checked.valid) return { ok: false, detail: checked.detail };
+    const decoded = await decodeCheck(building); if (!decoded.valid) return { ok: false, detail: decoded.detail };
     await fs.mkdir(path.dirname(destination), { recursive: true });
     // Windows cannot atomically rename over an existing file. Keep the old
     // verified chapter until the replacement is fully built and validated.

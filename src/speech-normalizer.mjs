@@ -34,8 +34,15 @@ function yearToWords(value) {
 export function normalizeForSpeech(source) {
   let text = String(source ?? '').replace(/\u00a0/g, ' ').replace(/\u00ad/g, '');
   text = text.replace(/([\p{L}])-[\r\n]+\s*([\p{L}])/gu, '$1$2');
-  text = text.replace(/\b(\d{1,4})\s*г\.(?=\s|$|[,;:)])/gu, (_m, year) => `${yearToWords(year)} году`);
+  text = text.replace(/\b(\d{1,4})\s*\u0433\.(?=\s|$|[,;:)])/gu, (match, year, offset, value) => `${yearToWords(year)} \u0433\u043e\u0434\u0443${/^\s+\p{Lu}/u.test(value.slice(offset + match.length)) ? '.' : ''}`);
   text = text.replace(/(^|\s)([IVXLCDM]+)\s+веке(?=$|[\s.,;:])/gmu, (_m, prefix, roman) => { const value = romanToNumber(roman); return value && value < ORDINAL_LOCATIVE.length ? `${prefix}${ORDINAL_LOCATIVE[value]} веке` : _m; });
+  text = text.replace(/(^|\s)т\.\s*д\.(?=\s+\p{Lu})/gmu, '$1и так далее.').replace(/(^|\s)т\.\s*п\.(?=\s+\p{Lu})/gmu, '$1и тому подобное.');
+  text = text.replace(/(^|\s)т\.\s*е\.(?=\s+\p{Lu})/gmu, '$1то есть.');
   text = text.replace(/(^|\s)т\.\s*д\./gmu, '$1и так далее').replace(/(^|\s)т\.\s*п\./gmu, '$1и тому подобное').replace(/(^|\s)т\.\s*е\./gmu, '$1то есть');
+  // End each explicit list item with a sentence pause, including the last item.
+  text = text.replace(/(^|\n)([ \t]*(?:[\u2022\u00bb*\-]|\d+[.)])\s+)([^\n]+)/gu, (_match, start, marker, item) => `${start}${marker}${/[.!?\u2026:]$/u.test(item.trim()) ? item : item.trimEnd() + '.'}`);
+  // Bullet markers in extracted PDFs often appear inline; punctuation gives
+  // the voice a natural break between successive list items.
+  text = text.replace(/\s+[»•]\s+(?=\p{L}|\d)/gu, (match, offset, value) => /[.!?…:]$/u.test(value.slice(0, offset)) ? ' ' : '. ');
   return text.replace(/[ \t]+\n/g, '\n').replace(/\n{3,}/g, '\n\n').replace(/[ \t]{2,}/g, ' ').trim();
 }

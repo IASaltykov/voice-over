@@ -22,3 +22,10 @@ export function splitText(text, limit = 700, minChars = 150) {
   if (current) chunks.push(current);
   return chunks;
 }
+
+export function splitSentences(text, limit = 700, minChars = 150) {
+  const normalized = text.replace(/\r\n/g, '\n').replace(/[ \t]+/g, ' ').replace(/\n{3,}/g, '\n\n').trim();
+  if (!normalized) return [];
+  const sentences = normalized.split(/\n{2,}/).flatMap((paragraph) => paragraph.replace(/\n/g, ' ').match(/.*?(?:[.!?…]+(?=\s|$)|$)/g)?.map((value) => value.trim()).filter(Boolean) || [paragraph.trim()]);
+  return sentences.flatMap((sentence) => sentence.length <= limit ? [sentence] : splitText(sentence, limit, minChars));
+}

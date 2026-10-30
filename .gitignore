@@ -34,6 +34,7 @@ output/
 audio_slides/
 cache/
 logs/
+data/
 models/
 engines/
 *.mp3

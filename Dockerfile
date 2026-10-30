@@ -15,7 +15,7 @@ COPY test ./test
 COPY tests ./tests
 COPY config.toml README.md ./
 
-RUN mkdir -p /app/input /app/output /app/logs /app/cache
-VOLUME ["/app/input", "/app/output", "/app/logs", "/app/cache"]
+RUN mkdir -p /app/input /app/output /app/logs /app/cache /app/data
+VOLUME ["/app/input", "/app/output", "/app/logs", "/app/cache", "/app/data"]
 
 ENTRYPOINT ["npx", "tsx", "src/main.mjs"]

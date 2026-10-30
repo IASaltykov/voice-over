@@ -4,9 +4,32 @@ services:
   voice-over:
     build: .
     image: voice-over:local
+    environment:
+      AI_LANGUAGE_DETECTION_ENABLED: ${AI_LANGUAGE_DETECTION_ENABLED-}
+      AI_TRANSLATION_ENABLED: ${AI_TRANSLATION_ENABLED-}
+      AI_PRONUNCIATION_ENABLED: ${AI_PRONUNCIATION_ENABLED-}
+      TRANSLATEGEMMA_API_KEY: ${TRANSLATEGEMMA_API_KEY-}
     volumes:
       - ./input:/app/input
       - ./output:/app/output
       - ./logs:/app/logs
       - ./cache:/app/cache
+      - ./data:/app/data
     command: ["--input", "/app/input", "--output", "/app/output"]
+  article-studio:
+    build: .
+    image: voice-over:local
+    environment:
+      AI_LANGUAGE_DETECTION_ENABLED: ${AI_LANGUAGE_DETECTION_ENABLED-}
+      AI_TRANSLATION_ENABLED: ${AI_TRANSLATION_ENABLED-}
+      AI_PRONUNCIATION_ENABLED: ${AI_PRONUNCIATION_ENABLED-}
+      TRANSLATEGEMMA_API_KEY: ${TRANSLATEGEMMA_API_KEY-}
+    stdin_open: true
+    tty: true
+    entrypoint: ["node", "src/studio.mjs"]
+    volumes:
+      - ./input:/app/input
+      - ./output:/app/output
+      - ./logs:/app/logs
+      - ./cache:/app/cache
+      - ./data:/app/data

@@ -17,3 +17,13 @@ test('segmentation preserves normalized text and never splits a word', () => {
   assert.ok(chunks.every((chunk) => chunk.length <= 45));
   assert.ok(verifyBlockSegmentation(source, chunks).ok);
 });
+
+test('last list item ends with a pause before following paragraph', () => {
+  assert.match(normalizeForSpeech('\u2022 First\n\u2022 Second\n\nNext'), /Second\.\n\nNext/);
+  assert.match(normalizeForSpeech('\u0438 \u0442. \u0434. Next'), /\u0434\u0430\u043b\u0435\u0435\. Next/);
+});
+
+test('numbered lists and year before a new sentence keep pauses', () => {
+  assert.match(normalizeForSpeech('1. First\n2. Second\n\nNext'), /Second\.\n\nNext/);
+  assert.match(normalizeForSpeech('1812 \u0433. Next'), /\u0433\u043e\u0434\u0443\. Next/);
+});

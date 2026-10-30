@@ -8,9 +8,10 @@
     "node": ">=22.13"
   },
   "scripts": {
-    "start": "tsx src/main.mjs",
+    "start": "node src/main.mjs",
+    "studio": "node src/studio.mjs",
     "test": "node --test",
-    "analyze": "tsx src/main.mjs --analyze-only",
+    "analyze": "node src/main.mjs --analyze-only",
     "edge:check": "node tests/edge-connection.mjs"
   },
   "dependencies": {
@@ -20,7 +21,6 @@
     "iconv-lite": "^0.6.3",
     "node-edge-tts": "1.2.11",
     "pdfjs-dist": "6.4.299",
-    "smol-toml": "^1.9.1",
-    "tsx": "^4.19.3"
+    "smol-toml": "^1.9.1"
   }
 }
